@@ -1,0 +1,88 @@
+
+# Define the number of resouces to be deployed 
+variable "vmcount" {
+  default = 1
+}
+
+data "vsphere_datacenter" "dc" {
+  name = "myDC"
+}
+data "vsphere_datastore" "datastore" {
+  name          = "myDatastorename"
+  datacenter_id = "${data.vsphere_datacenter.dc.id}"
+}
+data "vsphere_compute_cluster" "cluster" {
+    name          = "Compute"
+    datacenter_id = "${data.vsphere_datacenter.dc.id}"
+}
+
+data "vsphere_network" "network" {
+  name          = "Mgmt-Seg"
+  datacenter_id = "${data.vsphere_datacenter.dc.id}"
+}
+
+data "vsphere_virtual_machine" "template" {
+  name          = "Template_Win2019"
+  datacenter_id = "${data.vsphere_datacenter.dc.id}"
+}
+
+locals {
+  server_details = csvdecode(file("${path.module}/servers.csv"))
+}
+
+
+resource "vsphere_virtual_machine" "vm" {
+    count            = length(local.server_details)
+    name             = local.server_details[count.index].servername
+    #folder           = "vms"
+    resource_pool_id = "${data.vsphere_compute_cluster.cluster.resource_pool_id}"
+    datastore_id     = "${data.vsphere_datastore.datastore.id}"
+    firmware         = "${data.vsphere_virtual_machine.template.firmware}"
+    num_cpus         = local.server_details[count.index].cpuno
+    memory           = local.server_details[count.index].memsize
+    guest_id         = "${data.vsphere_virtual_machine.template.guest_id}"
+    network_interface {
+        network_id   = "${data.vsphere_network.network.id}"
+        adapter_type = "vmxnet3"
+    }
+    disk {
+        label             = "disk0"
+        #size             = "${data.vsphere_virtual_machine.template.disks.0.size}"
+		size			            = 100
+        #eagerly_scrub    = "${data.vsphere_virtual_machine.template.disks.0.eagerly_scrub}"
+        #thin_provisioned = "${data.vsphere_virtual_machine.template.disks.0.thin_provisioned}"
+    }
+    scsi_type = "${data.vsphere_virtual_machine.template.scsi_type}"
+	
+ clone {
+    template_uuid = "${data.vsphere_virtual_machine.template.id}"
+
+    customize {
+      windows_options {
+        computer_name         = local.server_details[count.index].servername
+        admin_password        = "mypasswd"
+        join_domain           = "mydomain"
+        domain_admin_user     = "admin"
+        domain_admin_password = "mysecurepaswd"
+       
+        # Run these commands after autologon. Configure WinRM access and disable windows firewall.
+        #run_once_command_list = [
+        #  "winrm quickconfig -force",
+        #  "winrm set winrm/config @{MaxEnvelopeSizekb=\"100000\"}",
+        #  "winrm set winrm/config/Service @{AllowUnencrypted=\"true\"}",
+        #  "winrm set winrm/config/Service/Auth @{Basic=\"true\"}",
+        #  "netsh advfirewall set allprofiles state off",
+        #]
+      }
+
+      network_interface {
+        #ipv4_address    = "${format("172.16.42.%d", (count.index + 1 + var.start_ipv4_address))}"
+        ipv4_address    = local.server_details[count.index].ipaddress
+        ipv4_netmask    = "${var.netmask}"
+        dns_server_list = ["${var.dns_server}"]
+      }
+
+      ipv4_gateway = "${var.def_gw}"
+    }
+  }
+}
